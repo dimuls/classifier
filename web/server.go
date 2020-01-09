@@ -8,41 +8,38 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dimuls/classifier-v2/entity"
 	"github.com/labstack/echo"
 	"github.com/labstack/echo/middleware"
 	"github.com/sirupsen/logrus"
-
-	"github.com/dimuls/classifier/entity"
 )
 
 type Classifier interface {
-	Train(docs []entity.Document)
-	Trained() bool
-	Classify(doc string) (string, error)
+	Train(docs []entity.Document) error
+	Training() bool
+	Classify(text string) (string, error)
+}
+
+type ClassifiersPool interface {
+	Classifier(classifierID string, create bool) (Classifier, bool)
+	RemoveClassifier(classifierID string) error
 }
 
 type Server struct {
-	bindAddr   string
-	debug      bool
-	classifier Classifier
-
-	echo *echo.Echo
-
-	training int32
-
-	waitGroup sync.WaitGroup
-
-	log *logrus.Entry
+	classifiersPool ClassifiersPool
+	bindAddr        string
+	debug           bool
+	echo            *echo.Echo
+	wg              sync.WaitGroup
+	log             *logrus.Entry
 }
 
-func NewServer(bindAddr string, c Classifier, debug bool) *Server {
-
+func NewServer(cp ClassifiersPool, bindAddr string, debug bool) *Server {
 	return &Server{
-		bindAddr:   bindAddr,
-		debug:      debug,
-		classifier: c,
-
-		log: logrus.WithField("subsystem", "web_server"),
+		classifiersPool: cp,
+		bindAddr:        bindAddr,
+		debug:           debug,
+		log:             logrus.WithField("subsystem", "web_server"),
 	}
 }
 
@@ -75,9 +72,8 @@ func (s *Server) Start() {
 			msg = fmt.Sprintf("%v", msg)
 		}
 
-		// Send response
 		if !c.Response().Committed {
-			if c.Request().Method == http.MethodHead { // Issue #608
+			if c.Request().Method == http.MethodHead {
 				err = c.NoContent(code)
 			} else {
 				err = c.String(code, msg.(string))
@@ -88,15 +84,16 @@ func (s *Server) Start() {
 		}
 	}
 
-	e.POST("/train", s.postTrain)
-	e.POST("/classify", s.postClassify)
-	e.GET("/training", s.getTraining)
+	e.POST("/classifiers/:classifier_id", s.postClassifier)
+	e.POST("/classifiers/:classifier_id/classify", s.postClassifierClassify)
+	e.GET("/classifiers/:classifier_id/training", s.getClassifierTraining)
+	e.DELETE("/classifiers/:classifier_id", s.deleteClassifier)
 
 	s.echo = e
 
-	s.waitGroup.Add(1)
+	s.wg.Add(1)
 	go func() {
-		defer s.waitGroup.Done()
+		defer s.wg.Done()
 		err := e.Start(s.bindAddr)
 		if err != nil && err != http.ErrServerClosed {
 			s.log.WithError(err).Error("failed to start")
@@ -113,7 +110,7 @@ func (s *Server) Stop() {
 		s.log.WithError(err).Error("failed to graceful stop")
 	}
 
-	s.waitGroup.Wait()
+	s.wg.Wait()
 }
 
 func logrusLogger(next echo.HandlerFunc) echo.HandlerFunc {

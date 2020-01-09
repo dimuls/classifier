@@ -1,3 +1,4 @@
-build/package/classifier
-*.exe
+classifier
+.env
+*.bc
 *.json

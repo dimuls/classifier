@@ -1,64 +1,94 @@
 package web
 
 import (
-	"errors"
+	"encoding/json"
+	"fmt"
 	"net/http"
-	"sync/atomic"
 
+	"github.com/dimuls/classifier-v2/entity"
 	"github.com/labstack/echo"
-
-	"github.com/dimuls/classifier/entity"
 )
 
-func (s *Server) postTrain(c echo.Context) error {
-	if atomic.LoadInt32(&s.training) == 1 {
+func (s *Server) postClassifier(c echo.Context) error {
+	classifier, _ := s.classifiersPool.Classifier(
+		c.Param("classifier_id"), true)
+
+	if classifier.Training() {
 		return echo.NewHTTPError(http.StatusServiceUnavailable,
-			"already training data")
+			"classifier is training")
 	}
 
 	var docs []entity.Document
 
-	err := c.Bind(&docs)
+	err := json.NewDecoder(c.Request().Body).Decode(&docs)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest,
-			"failed to bind body: "+err.Error())
+			"JSON decode request body: %w", err)
 	}
 
-	s.waitGroup.Add(1)
-	atomic.StoreInt32(&s.training, 1)
+	s.wg.Add(1)
 	go func() {
-		defer s.waitGroup.Done()
-		defer atomic.StoreInt32(&s.training, 0)
-		s.classifier.Train(docs)
+		defer s.wg.Done()
+		err = classifier.Train(docs)
+		if err != nil {
+			s.log.WithError(err).Error("failed to train classifier")
+		}
 	}()
 
 	return c.NoContent(http.StatusAccepted)
 }
 
-func (s *Server) getTraining(c echo.Context) error {
-	return c.JSON(http.StatusOK, atomic.LoadInt32(&s.training) == 1)
+func (s *Server) getClassifierTraining(c echo.Context) error {
+	classifier, exists := s.classifiersPool.Classifier(
+		c.Param("classifier_id"), false)
+	if !exists {
+		return echo.NewHTTPError(http.StatusNotFound,
+			"classifier with given id not found")
+	}
+	return c.JSON(http.StatusOK, classifier.Training())
 }
 
-func (s *Server) postClassify(c echo.Context) error {
-	if atomic.LoadInt32(&s.training) == 1 {
+func (s *Server) postClassifierClassify(c echo.Context) error {
+	classifier, exists := s.classifiersPool.Classifier(
+		c.Param("classifier_id"), false)
+	if !exists {
+		return echo.NewHTTPError(http.StatusNotFound,
+			"classifier with given id not found")
+	}
+
+	if classifier.Training() {
 		return echo.NewHTTPError(http.StatusServiceUnavailable,
-			"training data")
+			"classifier is training")
 	}
 
 	var doc struct {
 		Text string
 	}
 
-	err := c.Bind(&doc)
+	err := json.NewDecoder(c.Request().Body).Decode(&doc)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest,
-			"failed to bind body: "+err.Error())
+			"JSON decode request body: "+err.Error())
 	}
 
-	class, err := s.classifier.Classify(doc.Text)
+	if doc.Text == "" {
+		return echo.NewHTTPError(http.StatusBadRequest,
+			"empty text")
+	}
+
+	class, err := classifier.Classify(doc.Text)
 	if err != nil {
-		return errors.New("failed to classify: " + err.Error())
+		return fmt.Errorf("classify: %w", err)
 	}
 
 	return c.JSON(http.StatusOK, class)
+}
+
+func (s *Server) deleteClassifier(c echo.Context) error {
+	err := s.classifiersPool.RemoveClassifier(c.Param("classifier_id"))
+	if err != nil {
+		return fmt.Errorf(
+			"remove classifier form classifiers pool: %w", err)
+	}
+	return c.NoContent(http.StatusOK)
 }
