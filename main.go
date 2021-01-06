@@ -6,9 +6,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dimuls/classifier-v2/bayesian"
-	"github.com/dimuls/classifier-v2/mystem"
-	"github.com/dimuls/classifier-v2/web"
+	"github.com/dimuls/classifier/bayesian"
+	"github.com/dimuls/classifier/mystem"
+	"github.com/dimuls/classifier/web"
 	"github.com/sirupsen/logrus"
 )
 

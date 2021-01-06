@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dimuls/classifier-v2/entity"
+	"github.com/dimuls/classifier/entity"
 	"github.com/labstack/echo"
 	"github.com/labstack/echo/middleware"
 	"github.com/sirupsen/logrus"

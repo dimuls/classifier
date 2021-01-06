@@ -8,7 +8,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	"github.com/dimuls/classifier-v2/entity"
+	"github.com/dimuls/classifier/entity"
 )
 
 type Tokenizer interface {
